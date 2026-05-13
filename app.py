@@ -18,7 +18,7 @@ if quant_file and cmmc_file and cluster_file and meta_file:
     df_cmmc = pd.read_csv(cmmc_file, sep='\t') 
     df_cluster = pd.read_csv(cluster_file, sep='\t') 
     
-    # CORRECTION 1: Force metadata to be read entirely as string/text
+    # Handle metadata as string to preserve formatting (e.g., sample codes with leading zeros)
     if meta_file.name.endswith('.csv'):
         df_meta = pd.read_csv(meta_file, dtype=str)
     else:
@@ -26,17 +26,28 @@ if quant_file and cmmc_file and cluster_file and meta_file:
 
     st.header("Step 1 & 2: Merging and Annotation Filtering")
     
-    # Merge Tables
-    df_merged = pd.merge(df_quant, df_cmmc, left_on='row ID', right_on='query_scan', how='left')
-    df_merged = pd.merge(df_merged, df_cluster, left_on='row ID', right_on='cluster index', how='left')
+    # Outer Merging and Key Coalescing
+    # 1st Outer Merge: Quant + CMMC
+    df_merged = pd.merge(df_quant, df_cmmc, left_on='row ID', right_on='query_scan', how='outer')
+    df_merged['row ID'] = df_merged['row ID'].combine_first(df_merged['query_scan'])
     
-    st.success(f"Tables successfully merged! Initial feature count: {len(df_merged)}")
+    # 2nd Outer Merge: Result + Cluster Summary
+    df_merged = pd.merge(df_merged, df_cluster, left_on='row ID', right_on='cluster index', how='outer')
+    df_merged['row ID'] = df_merged['row ID'].combine_first(df_merged['cluster index'])
+    
+    st.success(f"Tables successfully merged (Outer Mode)! Initial feature count: {len(df_merged)}")
 
-    # Filter by Annotation
-    if 'Compound Name' not in df_merged.columns:
-        df_merged['Compound Name'] = None 
-        
-    df_annotated = df_merged[df_merged['Compound Name'].notna() | df_merged['input_name'].notna()].copy()
+    # ---------------------------------------------------------
+    # UPDATE: Filter by Annotation using Compound_Name
+    # ---------------------------------------------------------
+    # Ensure columns exist just to avoid Streamlit crashing if a bad file is uploaded
+    if 'Compound_Name' not in df_merged.columns:
+        df_merged['Compound_Name'] = None
+    if 'input_name' not in df_merged.columns:
+        df_merged['input_name'] = None
+
+    # Keeps rows where either 'Compound_Name' is not null OR 'input_name' is not null
+    df_annotated = df_merged[df_merged['Compound_Name'].notna() | df_merged['input_name'].notna()].copy()
     st.write(f"Features remaining after retaining only annotated rows: {len(df_annotated)}")
 
     st.header("Step 3 & 4: Intensity and Blank Correction")
@@ -48,6 +59,7 @@ if quant_file and cmmc_file and cluster_file and meta_file:
     sample_cols = [f"{f} Peak area" for f in sample_files if f"{f} Peak area" in df_annotated.columns]
     blank_cols = [f"{f} Peak area" for f in blank_files if f"{f} Peak area" in df_annotated.columns]
 
+    # Calculate Max Intensities row by row
     df_annotated['Max_Sample_Intensity'] = df_annotated[sample_cols].max(axis=1)
     df_annotated['Max_Blank_Intensity'] = df_annotated[blank_cols].max(axis=1).fillna(0)
 
@@ -68,9 +80,9 @@ if quant_file and cmmc_file and cluster_file and meta_file:
     st.header("Step 5: Sample Visualization")
     
     if not df_final.empty:
-        # CORRECTION 2: Combine GNPS and CMMC annotations for the plot label
+        # Define the unified label for the plot dropdown and title
         def define_annotation(row):
-            gnps = row.get('Compound Name', None)
+            gnps = row.get('Compound_Name', None)
             cmmc = row.get('input_name', None)
             
             labels = []
@@ -79,7 +91,6 @@ if quant_file and cmmc_file and cluster_file and meta_file:
             if pd.notna(cmmc) and str(cmmc).strip() != "":
                 labels.append(f"CMMC: {cmmc}")
                 
-            # Combine them, and include the feature ID just in case names overlap
             if labels:
                 return f"Feature {row['row ID']} | " + " | ".join(labels)
             return f"Feature {row['row ID']} | Unknown"
