@@ -18,11 +18,11 @@ if quant_file and cmmc_file and cluster_file and meta_file:
     df_cmmc = pd.read_csv(cmmc_file, sep='\t') 
     df_cluster = pd.read_csv(cluster_file, sep='\t') 
     
-    # Handle metadata (allow csv or excel)
+    # CORRECTION 1: Force metadata to be read entirely as string/text
     if meta_file.name.endswith('.csv'):
-        df_meta = pd.read_csv(meta_file)
+        df_meta = pd.read_csv(meta_file, dtype=str)
     else:
-        df_meta = pd.read_excel(meta_file)
+        df_meta = pd.read_excel(meta_file, dtype=str)
 
     st.header("Step 1 & 2: Merging and Annotation Filtering")
     
@@ -68,12 +68,21 @@ if quant_file and cmmc_file and cluster_file and meta_file:
     st.header("Step 5: Sample Visualization")
     
     if not df_final.empty:
+        # CORRECTION 2: Combine GNPS and CMMC annotations for the plot label
         def define_annotation(row):
-            if pd.notna(row['Compound Name']):
-                return f"GNPS annotation: {row['Compound Name']}"
-            elif pd.notna(row['input_name']):
-                return f"CMMC annotation: {row['input_name']}"
-            return "Unknown"
+            gnps = row.get('Compound Name', None)
+            cmmc = row.get('input_name', None)
+            
+            labels = []
+            if pd.notna(gnps) and str(gnps).strip() != "":
+                labels.append(f"GNPS: {gnps}")
+            if pd.notna(cmmc) and str(cmmc).strip() != "":
+                labels.append(f"CMMC: {cmmc}")
+                
+            # Combine them, and include the feature ID just in case names overlap
+            if labels:
+                return f"Feature {row['row ID']} | " + " | ".join(labels)
+            return f"Feature {row['row ID']} | Unknown"
             
         df_final['Plot_Name'] = df_final.apply(define_annotation, axis=1)
 
